@@ -46,38 +46,15 @@ jobs:
           echo "Using image name: $IMAGE_NAME"
           echo "::set-output name=image_name::$IMAGE_NAME"
 
-      - name: Get existing tags from registry
-        id: get_tags
-        run: |
-          echo "Fetching tags from registry..."
-          IMAGE_NAME="${{ steps.determine_image_name.outputs.image_name }}"
-          RESPONSE=$(curl -s -u ${{ secrets.DOCKER_USERNAME }}:${{ secrets.DOCKER_PASSWORD }} https://${{ vars.REGISTRY_URL }}/v2/$IMAGE_NAME/tags/list)
-          if echo "$RESPONSE" | jq -e '.errors[0].code == "NAME_UNKNOWN"' > /dev/null; then
-            echo "Image not found: $IMAGE_NAME"
-            TAGS="[]"
-          else
-            TAGS=$(echo "$RESPONSE" | jq -r '.tags[]' || echo "null")
-            if [ "$TAGS" = "null" ] || [ -z "$TAGS" ]; then
-              echo "No tags found for image: $IMAGE_NAME"
-              TAGS="[]"
-            fi
-          fi
-          echo "Tags fetched: $TAGS"
-          echo "::set-output name=tags::$TAGS"
-        env:
-          REGISTRY_URL: ${{ vars.REGISTRY_URL }}
-
       - name: Determine next tag
         id: next_tag
         run: |
           echo "Determining the next tag..."
-          TAGS="${{ steps.get_tags.outputs.tags }}"
-          if [ "$TAGS" = "[]" ] || [ -z "$TAGS" ]; then
+          IMAGE_NAME="${{ steps.determine_image_name.outputs.image_name }}"
+          LATEST_TAG=$(curl -s -u ${{ secrets.DOCKER_USERNAME }}:${{ secrets.DOCKER_PASSWORD }} ${{ secrets.NEXT_TAG }}/$IMAGE_NAME)
+          if [ "$LATEST_TAG" = "" ]; then
             NEXT_TAG="1.0.0"
           else
-            # Filter out any non-version tags like 'latest' and sort correctly
-            SORTED_TAGS=$(echo "$TAGS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1nr -k2,2nr -k3,3nr)
-            LATEST_TAG=$(echo "$SORTED_TAGS" | head -n1)
             echo "Latest tag is $LATEST_TAG"
       
             IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
