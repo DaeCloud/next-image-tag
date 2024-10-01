@@ -12,7 +12,7 @@ app.get('/:image', (req, res) => {
 
     // get request to docker registry for image tags with basic auth
     request.get({
-        url: `${DOCKER_REGISTRY}/v2/${image}/tags/list`,
+        url: `${process.env.DOCKER_REGISTRY}/v2/${image}/tags/list`,
         auth: {
             username: process.env.DOCKER_USERNAME,
             password: process.env.DOCKER_PASSWORD
