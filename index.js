@@ -45,7 +45,7 @@ app.get('/:image', (req, res) => {
 
             res.send(tags[0]);
         } else {
-            res.send(body);
+            res.send('');
         }
         
     });
