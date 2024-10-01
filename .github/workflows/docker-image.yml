@@ -1,0 +1,119 @@
+name: Docker Image CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Select the type of version update'
+        required: true
+        type: choice
+        options:
+          - PATCH
+          - MINOR
+          - MAJOR
+      image_name:
+        description: 'Override the default image name'
+        required: false
+        type: string
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Private Registry
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: ${{ vars.REGISTRY_URL }}
+
+      - name: Determine image name
+        id: determine_image_name
+        run: |
+          # Default image name to GitHub repository name if no input is provided
+          if [ -z "${{ github.event.inputs.image_name }}" ]; then
+            IMAGE_NAME=$(echo "${{ github.repository }}" | awk -F '/' '{print $2}')
+          else
+            IMAGE_NAME="${{ github.event.inputs.image_name }}"
+          fi
+          echo "Using image name: $IMAGE_NAME"
+          echo "::set-output name=image_name::$IMAGE_NAME"
+
+      - name: Get existing tags from registry
+        id: get_tags
+        run: |
+          echo "Fetching tags from registry..."
+          IMAGE_NAME="${{ steps.determine_image_name.outputs.image_name }}"
+          RESPONSE=$(curl -s -u ${{ secrets.DOCKER_USERNAME }}:${{ secrets.DOCKER_PASSWORD }} https://${{ vars.REGISTRY_URL }}/v2/$IMAGE_NAME/tags/list)
+          if echo "$RESPONSE" | jq -e '.errors[0].code == "NAME_UNKNOWN"' > /dev/null; then
+            echo "Image not found: $IMAGE_NAME"
+            TAGS="[]"
+          else
+            TAGS=$(echo "$RESPONSE" | jq -r '.tags[]' || echo "null")
+            if [ "$TAGS" = "null" ] || [ -z "$TAGS" ]; then
+              echo "No tags found for image: $IMAGE_NAME"
+              TAGS="[]"
+            fi
+          fi
+          echo "Tags fetched: $TAGS"
+          echo "::set-output name=tags::$TAGS"
+        env:
+          REGISTRY_URL: ${{ vars.REGISTRY_URL }}
+
+      - name: Determine next tag
+        id: next_tag
+        run: |
+          echo "Determining the next tag..."
+          TAGS="${{ steps.get_tags.outputs.tags }}"
+          if [ "$TAGS" = "[]" ] || [ -z "$TAGS" ]; then
+            NEXT_TAG="1.0.0"
+          else
+            # Filter out any non-version tags like 'latest' and sort correctly
+            SORTED_TAGS=$(echo "$TAGS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1nr -k2,2nr -k3,3nr)
+            LATEST_TAG=$(echo "$SORTED_TAGS" | head -n1)
+            echo "Latest tag is $LATEST_TAG"
+      
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+      
+            VERSION_TYPE="${{ github.event.inputs.version_type }}"
+            case $VERSION_TYPE in
+              PATCH)
+                PATCH=$((PATCH + 1))
+                ;;
+              MINOR)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              MAJOR)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              *)
+                echo "Invalid version type: $VERSION_TYPE"
+                exit 1
+                ;;
+            esac
+      
+            NEXT_TAG="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          echo "Next tag is $NEXT_TAG"
+          echo "::set-output name=tag::$NEXT_TAG"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ vars.REGISTRY_URL }}/${{ steps.determine_image_name.outputs.image_name }}:${{ steps.next_tag.outputs.tag }}
+            ${{ vars.REGISTRY_URL }}/${{ steps.determine_image_name.outputs.image_name }}:latest
