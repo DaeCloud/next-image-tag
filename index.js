@@ -21,6 +21,11 @@ app.get('/:image', (req, res) => {
     }, (error, response, body) => {
         if(body.tags){
             tags = body.tags;
+
+            if(tags.length == 0){
+                res.send('');
+                return;
+            }
             
             // remove "latest" tag from array
             tags.pop(tags.indexOf('latest'));
